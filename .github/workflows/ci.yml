@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main, c3-0.7]
+  pull_request:
+    branches: [main, c3-0.7]
+  workflow_dispatch:
+
+env:
+  TREE_SITTER_ABI: 15
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up tree-sitter
+        uses: tree-sitter/setup-action@v2
+        with:
+          install-cli: true
+          install-lib: true
+
+      - name: Generate parser
+        run: tree-sitter generate --abi ${{ env.TREE_SITTER_ABI }}
+
+      - name: Run parser tests
+        run: tree-sitter test
+
+      - name: Checkout c3lang/vendor
+        uses: actions/checkout@v6
+        with:
+          repository: c3lang/vendor
+          path: vendor
+
+      - name: Setup C3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |-
+          # Determine the target branch (handling both pushes and PRs)
+          BRANCH="${{ github.base_ref || github.ref_name }}"
+          case "$BRANCH" in
+            "main")    C3_TAG="" ;; # Empty tag tracks latest stable release
+            "c3-0.7")  C3_TAG="v0.7.11" ;;
+            *)         C3_TAG="latest-prerelease-tag" ;;
+          esac
+          echo "Using C3 version: $C3_TAG for branch $BRANCH"
+
+          gh release download "$C3_TAG" --repo c3lang/c3c --pattern "c3-linux.tar.gz" --clobber
+          tar -xzf c3-linux.tar.gz
+          gh release download "$C3_TAG" --repo c3lang/c3c --archive=tar.gz -O c3c-source.tar.gz --clobber
+          mkdir -p c3c-source
+          tar -xzf c3c-source.tar.gz -C c3c-source --strip-components=1
+
+      - name: Test C3 integration
+        run: |-
+          c3/c3c run --path test_runner --libdir $PWD/vendor/libraries --libdir $PWD/bindings/c3 -L $LD_LIBRARY_PATH -- $PWD/c3/c3c $PWD/c3/lib $PWD/c3c-source/test/unit $PWD/c3c-source/test/test_suite
+
+  regenerate:
+    name: Regenerate parser
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+
+      - name: Set up tree-sitter
+        uses: tree-sitter/setup-action@v2
+        with:
+          install-cli: true
+
+      - name: Set up Emscripten
+        uses: emscripten-core/setup-emsdk@v16
+
+      - name: Generate parser
+        run: tree-sitter generate --abi ${{ env.TREE_SITTER_ABI }}
+
+      - name: Build WASM
+        run: tree-sitter build --wasm
+
+      - name: Update playground
+        run: |-
+          tree-sitter playground -e ./docs
+          sed -i 's|LANGUAGE_BASE_URL = ""|LANGUAGE_BASE_URL = "https://c3lang.github.io/tree-sitter-c3"|' ./docs/index.html
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "Regenerate parser"
+          file_pattern: 'src/ docs/'

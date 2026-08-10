@@ -5,6 +5,7 @@ enum TokenType {
   BLOCK_COMMENT_END_OR_EOF,
   DOC_COMMENT_TEXT,
   REAL_LITERAL,
+  ERROR_SENTINEL,
 };
 
 void *tree_sitter_c3_external_scanner_create() { return NULL; }
@@ -108,38 +109,12 @@ static bool is_hex_digit(int32_t c) {
 }
 
 static bool scan_realtype(TSLexer *lexer) {
-  if ((lexer->lookahead | 32) == 'd') {
+  char c = (lexer->lookahead | 32);
+  if (c == 'f' || c == 'd') {
     lexer->advance(lexer, false);
     return true;
   }
-
-  if ((lexer->lookahead | 32) != 'f') {
-    return false;
-  }
-
-  lexer->advance(lexer, false);
-  lexer->mark_end(lexer);
-
-  int32_t c1 = lexer->lookahead;
-  lexer->advance(lexer, false);
-  int32_t c2 = lexer->lookahead;
-  lexer->advance(lexer, false);
-
-  // NOTE f32/f64 suffixes are deprecated for C3 >= 0.7.2
-  if ((c1 == '1' && c2 == '6') || (c1 == '3' && c2 == '2') || (c1 == '6' && c2 == '4')) {
-    lexer->mark_end(lexer);
-    return true;
-  }
-
-  int32_t c3 = lexer->lookahead;
-  lexer->advance(lexer, false);
-
-  if (c1 == '1' && c2 == '2' && c3 == '8') {
-    lexer->mark_end(lexer);
-    return true;
-  }
-
-  return true;
+  return false;
 }
 
 static bool scan_digits(TSLexer *lexer) {
@@ -270,6 +245,12 @@ static bool scan_real_literal(TSLexer *lexer) {
 
 bool tree_sitter_c3_external_scanner_scan(void *payload, TSLexer *lexer,
                                           const bool *valid_symbols) {
+  // Bail out when tree-sitter is in error-recovery mode 
+  // See https://tree-sitter.github.io/tree-sitter/creating-parsers/4-external-scanners.html#other-external-scanner-details
+  if (valid_symbols[ERROR_SENTINEL]) {
+    return false;
+  }
+
   if (valid_symbols[BLOCK_COMMENT_TEXT] && scan_block_comment_text(lexer)) {
     lexer->result_symbol = BLOCK_COMMENT_TEXT;
     return true;

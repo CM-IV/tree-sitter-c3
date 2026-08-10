@@ -4,21 +4,13 @@ import ts, tree_sitter_c3;
 
 // Files that C3C parses without error but tree-sitter-c3 doesn't
 const String[*] IGNORED_FILES = {
-  "test/test_suite/arrays/inferred_array_err.c3",
-  "test/test_suite/cast/cast_parse_fails.c3",
-  "test/test_suite/cast/cast_parse_fails2.c3",
-  "test/test_suite/compile_time/ct_switch_more_checks.c3",
-  "test/test_suite/contracts/in_array.c3",
-  "test/test_suite/define/common2.c3",
-  "test/test_suite/define/define_name_errors.c3",
-  "test/test_suite/expressions/addr_of_fails.c3",
-  "test/test_suite/functions/ref_param_fn.c3",
   "test/test_suite/generic/generic_instantiate_alias.c3",
-  "test/test_suite/generic/generic_mistake_initializer_2099.c3",
-  "test/test_suite/statements/do_without_compound.c3",
-  "test/test_suite/statements/if_single.c3",
+  "test/test_suite/functions/ref_param_fn.c3",
+  "test/test_suite/compile_time/ct_switch_more_checks.c3",
   "test/test_suite/struct/const_access_error.c3",
-};
+  "test/test_suite/statements/if_single.c3",
+  "test/test_suite/statements/do_without_compound.c3"
+ };
 
 Path compiler_path;
 uint total_count;
@@ -30,7 +22,7 @@ fn int main(String[] args) {
     return 1;
   }
 
-  Path? c3c_executable = path::temp(args[1]);
+  Path? c3c_executable = path::tnew(args[1]);
   if (catch c3c_executable) {
     io::printn("ERROR: Invalid path to c3c executable");
     return 1;
@@ -47,12 +39,12 @@ fn int main(String[] args) {
   defer parser::delete(parser);
 
   foreach (arg : args[2..]) {
-    if (try Path base_dir = path::temp(arg)) {
-      io::printfn("Parsing files in %s", base_dir);
+    if (try Path base_dir = path::tnew(arg)) {
+      // io::printfn("Parsing files in %s", base_dir);
       if (catch err = base_dir.walk(fn bool? (Path path, bool is_dir, void* user_data) {
-        if (is_dir) io::printfn("Parsing files in %s", path);
+        // if (is_dir) io::printfn("Parsing files in %s", path);
         if (path.has_suffix(".c3") || path.has_suffix(".c3i") || path.has_suffix(".c3t")) {
-          process_file(path.str_view(), user_data);
+          process_file(path, user_data);
         }
         return false;
       }, parser)) {
@@ -85,7 +77,7 @@ fn bool ignore_file(String file_path) {
 
 typedef NullSink (OutStream) = void*;
 
-fn usz? NullSink.write(&self, char[] bytes) @dynamic {
+fn sz? NullSink.write(&self, char[] bytes) @dynamic {
   return bytes.len;
 }
 
@@ -108,7 +100,7 @@ fn void process_file(String file_path, TSParser* parser) => @pool() {
   if (ts::node_has_error(root_node)) {
     // Check if C3C parses the file
     String[] cmdline = {
-      compiler_path.str_view(),
+      compiler_path,
       "-P",
       "compile-only",
       file_path,
@@ -116,11 +108,7 @@ fn void process_file(String file_path, TSParser* parser) => @pool() {
 
     // io::printfn("Running %s", cmdline);
 
-    SubProcess process = process::create(cmdline, {
-      .search_user_path,
-      .no_window,
-      // .inherit_environment,
-    })!!;
+    Process process = process::spawn(cmdline, SpawnOptions.NO_WINDOW)!!;
     defer process.destroy();
 
     NullSink out;
